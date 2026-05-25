@@ -1,5 +1,5 @@
 ﻿#include <iostream>     //   更新计划： 目前想着使用类继承重构代码，但是目前发现原来的类封装时将读取文件，端序转换和进行哈希值计算合到一个函数里面，目前打算是将读取文件，端序转换函数里面有关SHA-256的语句删除，同时在sha256和sm3上重新写两个一样的函数，调用父类的同一个函数。或者说有什么别的更好的方法。然后搞完了这些，还要接着写关于安全方面的代码，避免时序攻击和内存攻击
-#include <fstream>      
+#include <fstream>      //为了在新分支上commit代码，稍微修改，占位记录
 #include <string>      
 #include <vector>       
 #include <cstdint>      
