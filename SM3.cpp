@@ -208,6 +208,53 @@ const uint32_t SHA_256::K[64] = {
     0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 };
+class SM3:public Hash_run{
+    private:
+        inline uint32_t rotl(uint32_t x, int n) {      //该函数实现左循环移位，下列函数为了实现SM3算法中的各种位运算而定义的辅助函数
+            return (x << n) | (x >> (32 - n));
+        }
+        void bytes_to_words_32(const uint8_t block[64], uint32_t words[16]) {//该函数实现端序转换的同时将输入的512比特分为16个块
+            for (int i = 0; i < 16; i++) {
+                words[i] = ((uint32_t)block[i * 4] << 24) |
+                    ((uint32_t)block[i * 4 + 1] << 16) |
+                    ((uint32_t)block[i * 4 + 2] << 8) |
+                    ((uint32_t)block[i * 4 + 3]);
+            }
+        }
+        uint32_t P_0(uint32_t x){
+            return x^rotl(x,9)^rotl(x,17);
+        }
+        uint32_t P_1(uint32_t x){
+            return x^rotl(x,15)^rotl(x,23);
+        }
+        void expand_W(uint32_t W[]){
+            for(int i=16;i<68;++i)
+            {
+                W[i]=P_1(W[i-16]^W[i-9]^rotl(W[i-3],15))^rotl(W[i-13],7)^W[i-6];
+            }
+        }
+        void expand_W_prime(uint32_t W_prime[],uint32_t W[]){
+            for(int i=0;i<64;++i)
+            {
+                W_prime[i]=W[i]^W[i+4];
+            }
+        }
+        uint32_t FF_i(int i,uint32_t x,uint32_t y,uint32_t z){
+            if(i<=15)
+                return x^y^z;
+            if(i>15)
+                return (x&y)^(x&z)^(y&z);
+        }
+        uint32_t GG_i(int i,uint32_t x,uint32_t y,uint32_t z){
+            if(i<=15)
+                return x^y^z;
+            if(i>15)
+                return (x&y)^(~x&z);
+        }
+        uint32_t compress(uint32_t H[],uint32_t W[],uint32_t W_prime[]){
+            
+        }
+};
 int main() {
     int result=0;
     int n = 0;
