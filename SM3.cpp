@@ -1,39 +1,35 @@
 ﻿#include <iostream>     //   更新计划： 目前想着使用类继承重构代码，但是目前发现原来的类封装时将读取文件，端序转换和进行哈希值计算合到一个函数里面，目前打算是将读取文件，端序转换函数里面有关SHA-256的语句删除，同时在sha256和sm3上重新写两个一样的函数，调用父类的同一个函数。或者说有什么别的更好的方法。然后搞完了这些，还要接着写关于安全方面的代码，避免时序攻击和内存攻击
-#include <fstream>      
-#include <string>      
-#include <vector>       
+#include <fstream>      //我发现虚函数是个好东西
+#include <string>      //测试了几个测试向量，结果是正确的。下一步打算重写main函数，改成循环形式，并且可以选择算法。同时加入重置函数，重置哈希值，或者是计算完之后将代码锁定，再次计算哈希值会报错，但是可以输出多次哈希值。或者两者都要。还有就是print_hash函数也打算重写一下，因为可能需要输出对应的算法名。目前想法是这个输出函数依旧放在父类，但是每个子类对象可以定义一个字符串变量，内容是算法名，最后直接输出。上面这些是下一步的更新计划。做完上面的之后打算进一步修改代码，防御时序攻击，内存攻击等
+#include <vector>       //现在的更新计划应该是增加安全性，防御时序攻击和内存攻击了
 #include <cstdint>      
 #include <iomanip>      
 #include <cstring>
 class Hash_run{
+    protected:
+        uint32_t H[8];
+        int k=0;
     private:
-	//该函数实现转换端序的作用，已经快被ai气死了。没有将小端序转化为大端序的时候，我发现相同的输入会有不同的输出，>
-	void bytes_to_words_32(const uint8_t block[64], uint32_t words[16]) {
-            for (int i = 0; i < 16; i++) {
-                words[i] = ((uint32_t)block[i * 4] << 24) |
-                    ((uint32_t)block[i * 4 + 1] << 16) |
-                    ((uint32_t)block[i * 4 + 2] << 8) |
-                    ((uint32_t)block[i * 4 + 3]);
-            }
-        }
-	inline uint32_t rotr(uint32_t x, int n) {      //该函数实现右循环移位，下列函数为了实现SHA-256算法中的各种位运>
-            return (x >> n) | (x << (32 - n));
-        }
-	void the_last(uint64_t total_bits, uint32_t H[8], uint32_t W[64], const uint32_t K[64]) {//该函数实现当文件刚[>
+        uint32_t W[64];
+        //virtual const uint32_t* get_K() const = 0;//因为K是static数组，所以使用虚函数返回它的地址
+        //const uint32_t* K = get_K();这个不可以在构造函数或者初始化使用，只能在普通函数里面调用，否则会出现严重错误。
+        virtual void process_block(const uint8_t block[64])=0;//为了使用虚函数，但是sha256和sm3的许多代码，函数不同，所以设置一个这样的虚函数将整个计算过程封起来，这样就可以复用文件读取，输出等代码了
+        virtual void name()=0;
+        void the_last(uint64_t total_bits) {//该函数实现当文件刚好为512比特的整数倍时，手动创建最后一个数据块参与哈希值运算
             uint8_t J[64] = { 0x80 };
             for (int i = 0; i < 8; i++) {
                 J[56 + i] = (total_bits >> (56 - 8 * i)) & 0xFF;
             }
-//            uint32_t words[16];
-//            bytes_to_words_32(J, words);//下面有三个语句被我标记//。一开始代码不是这样的，原来代码是将原来的数组强制转>
-//            expand_words(words, W);
-//            compress(H, W, K);这里原来是专门设计给SHA－256算法的添加最后一个数据块的代码，现在为了写成类的形式，增强通用性，这里的代码被注释，仅仅作为留档
+            process_block(J);
         }
-	void process_file(const std::string& filepath, uint32_t H[8], uint32_t W[64], const uint32_t K[64]) {//该函数实现对文件计算哈希值，同时通过流式读取降低内存占用
+        void process_file(const std::string& filepath) {//该函数实现对文件计算哈希值，同时通过流式读取降低内存占用
+            //const uint32_t* K = get_K();
             std::ifstream file(filepath, std::ios::binary);
+            if(k!=0){
+                throw std::logic_error("不可以重复迭代计算，请直接输出或者使用重置函数");
+            }
             if (!file) {
                 throw std::runtime_error("无法打开文件: " + filepath);
-                return;
             }
             char buffer[4096];
             uint32_t words[16];
@@ -43,18 +39,14 @@ class Hash_run{
                 total_bits += bytes_read * 8;
                 if (bytes_read == 4096) {
                     for (int k = 0; k < 4096; k += 64) {
-                        bytes_to_words_32(reinterpret_cast<const uint8_t*>(buffer + k), words);//
-                        expand_words(words, W);
-                        compress(H, W, K);
+                        process_block(reinterpret_cast<uint8_t*>(buffer+k));
                     }
-                  }//只有这里往上的代码，才会一直参与while循环，当不满足bytes_read==4096时，将会执行下面代码，执行完之后会跳出循环
+                }//只有这里往上的代码，才会一直参与while循环，当不满足bytes_read==4096时，将会执行下面代码，执行完之后会跳出循环
                 else if (bytes_read % 64 == 0 && bytes_read != 4096) {
                     for (int k = 0; k < bytes_read; k += 64) {
-                        bytes_to_words_32(reinterpret_cast<const uint8_t*>(buffer + k), words);//
-                        expand_words(words, W);
-                        compress(H, W, K);
+                        process_block(reinterpret_cast<uint8_t*>(buffer+k));
                     }
-                    the_last(total_bits, H, W, K);
+                    the_last(total_bits);
                 }
                 else {
                     std::vector<uint8_t> Last;
@@ -67,25 +59,86 @@ class Hash_run{
                         Last.push_back(static_cast<uint8_t>((total_bits >> (i * 8)) & 0xFF));
                     }
                     for (size_t i = 0; i < Last.size(); i += 64) {
-                        bytes_to_words_32(Last.data() + i, words);//
-                        expand_words(words, W);
-                        compress(H, W, K);
+                        process_block(Last.data()+i);
                     }
                 }
             }
             if (total_bits % 4096 == 0) {//文件恰好为4kb的整数倍的情况时，进行的选择
-                the_last(total_bits, H, W, K);                                                                                                                                                                                                            }
+                the_last(total_bits);
+            }
+            ++k;
         }
+        void str(std::string input){//该函数实现求字符串的哈希值
+            uint64_t total_bits = input.size() * 8;
+            input += static_cast<char>(0x80);
+            if(k!=0){
+                throw std::logic_error("不可以重复迭代计算，请直接输出或者使用重置函数");
+            }
+            while ((input.size() * 8) % 512 != 448) {
+                input += static_cast<char>(0x00);
+            }
+            for (int i = 7; i >= 0; --i) {
+                input += static_cast<char>((total_bits >> (i * 8)) & 0xFF);//实现长度的端序转换，再接到后面
+            }
+            if (input.size() * 8 > 512) {     //如果经过处理之后的数据大于512比特，那么需要进行分块
+                for (size_t i = 0; i < input.size(); i += 64) {
+                    process_block(reinterpret_cast<uint8_t*>(input.data()+i));
+                }
+            }
+            else {
+                process_block(reinterpret_cast<uint8_t*>(input.data()));
+            }
+            ++k;
+        }
+    public:
+    int str_run(std::string input){
+        try{
+            str(input);
+            return 0;
+        }
+        catch (const std::logic_error& e){
+            std::cerr << "错误：" << e.what() << std::endl;
+            return 2;
+        }
+    }
+    int file_run(std::string filepath){//该函数实现求文件的哈希值，需要输入文件地址
+        try {
+	        process_file(filepath);
+	        return 0;
+        }
+        catch (const std::runtime_error& e) {
+            std::cerr << "错误：" << e.what() << std::endl;
+	        return 1;
+        }
+        catch (const std::logic_error& e){
+            std::cerr << "错误：" << e.what() << std::endl;
+            return 2;
+        }
+    }
+    void print_hash() {//输出哈希值
+        name();
+        for (int i = 0; i < 8; i++) {
+            std::cout << std::hex << std::setw(8) << std::setfill('0') << H[i];
+        }
+        std::cout << std::endl;
+    }
+    virtual void restore()=0;
+    virtual ~Hash_run() = default;
 };  
-class SHA_256{
+class SHA_256:public Hash_run{
     private:
         uint32_t W[64];
         uint32_t words[16];
         static const uint32_t K[64];
-        uint32_t H[8] = {
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
-        };
+        //const uint32_t* get_K()  {//const override
+        //    return K;  // 返回自己的 static const 数组
+        //}
+        void name(){
+            std::cout<<"SHA-256:";
+        }
+        inline uint32_t rotr(uint32_t x, int n) {      //该函数实现右循环移位，下列函数为了实现SHA-256算法中的各种位运算而定义的辅助函数
+            return (x >> n) | (x << (32 - n));
+        }
         inline uint32_t Ch(uint32_t x, uint32_t y, uint32_t z) {
             return (x & y) ^ (~x & z);
         }
@@ -99,11 +152,12 @@ class SHA_256{
             return rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25);
         }
         inline uint32_t sigma0(uint32_t x) {
+            return rotr(x, 7) ^ rotr(x, 18) ^ (x >> 3);
         }
         inline uint32_t sigma1(uint32_t x) {
             return rotr(x, 17) ^ rotr(x, 19) ^ (x >> 10);
-        }
-        void expand_words(const uint32_t words[16], uint32_t W[64]) {
+        } 
+        void expand_words (const uint32_t words[16], uint32_t W[64]) {
             for (int i = 0; i < 16; ++i)
             {
                 W[i] = words[i];
@@ -145,95 +199,43 @@ class SHA_256{
             H[6] += g;
             H[7] += h;
         }
-        void process_file(const std::string& filepath, uint32_t H[8], uint32_t W[64], const uint32_t K[64]) {//该函数实现对文件计算哈希值，同时通过流式读取降低内存占用
-            std::ifstream file(filepath, std::ios::binary);
-            if (!file) {
-                throw std::runtime_error("无法打开文件: " + filepath);
-                return;
+        //该函数实现转换端序的作用，已经快被ai气死了。没有将小端序转化为大端序的时候，我发现相同的输入会有不同的输出，十分地奇怪，也琢磨不明白。
+        void bytes_to_words_32(const uint8_t block[64], uint32_t words[16]) {
+            for (int i = 0; i < 16; i++) {
+                words[i] = ((uint32_t)block[i * 4] << 24) |
+                    ((uint32_t)block[i * 4 + 1] << 16) |
+                    ((uint32_t)block[i * 4 + 2] << 8) |
+                    ((uint32_t)block[i * 4 + 3]);
             }
-            char buffer[4096];
-            uint32_t words[16];
-            uint64_t total_bits = 0;
-            while (file.read(buffer, sizeof(buffer)) || file.gcount() > 0) {
-                size_t bytes_read = file.gcount();
-                total_bits += bytes_read * 8;
-                if (bytes_read == 4096) {
-                    for (int k = 0; k < 4096; k += 64) {
-                        bytes_to_words_32(reinterpret_cast<const uint8_t*>(buffer + k), words);//
-                        expand_words(words, W);
-                        compress(H, W, K);
-                    }
-                  }//只有这里往上的代码，才会一直参与while循环，当不满足bytes_read==4096时，将会执行下面代码，执行完之后会跳出循环
-                else if (bytes_read % 64 == 0 && bytes_read != 4096) {
-                    for (int k = 0; k < bytes_read; k += 64) {
-                        bytes_to_words_32(reinterpret_cast<const uint8_t*>(buffer + k), words);//
-                        expand_words(words, W);
-                        compress(H, W, K);
-                    }
-                    the_last(total_bits, H, W, K);
-                }
-                else {
-                    std::vector<uint8_t> Last;
-                    Last.insert(Last.end(), buffer, buffer + bytes_read);
-                    Last.push_back(0x80);
-                    while ((Last.size() * 8) % 512 != 448) {
-                        Last.push_back(0x00);
-                    }
-                    for (int i = 7; i >= 0; --i) {
-                        Last.push_back(static_cast<uint8_t>((total_bits >> (i * 8)) & 0xFF));
-                    }
-                    for (size_t i = 0; i < Last.size(); i += 64) {
-                        bytes_to_words_32(Last.data() + i, words);//
-                        expand_words(words, W);
-                        compress(H, W, K);
-                    }
-                }
-            }
-            if (total_bits % 4096 == 0) {//文件恰好为4kb的整数倍的情况时，进行的选择
-                the_last(total_bits, H, W, K);
-            }
+        }
+        void process_block(const uint8_t block[64]) override{
+            bytes_to_words_32(block, words);
+            expand_words(words, W);
+            compress(H, W, K);
         }
     public:
-        void str_run(std::string input){//该函数实现求字符串的哈希值
-            uint64_t input_size = input.size();
-            uint64_t total_bits = input_size * 8;
-            input += static_cast<char>(0x80);
-            while ((input.size() * 8) % 512 != 448) {
-                input += static_cast<char>(0x00);
-            }
-            for (int i = 7; i >= 0; --i) {
-                input += static_cast<char>((total_bits >> (i * 8)) & 0xFF);//实现长度的端序转换，再接到后面
-            }
-            if (input.size() * 8 > 512) {     //如果经过处理之后的数据大于512比特，那么需要进行分块
-                for (size_t i = 0; i < input.size(); i += 64) {
-                    bytes_to_words_32(reinterpret_cast<const uint8_t*>(&input[i]), words);
-                    expand_words(words, W);
-                    compress(H, W, K);
-                }
-            }
-            else {
-                bytes_to_words_32(reinterpret_cast<const uint8_t*>(&input[0]), words);
-                expand_words(words, W);
-                compress(H, W, K);
-            }
+        SHA_256(){
+            H[0]=0x6a09e667;
+            H[1]=0xbb67ae85;
+            H[2]=0x3c6ef372;
+            H[3]=0xa54ff53a;
+            H[4]=0x510e527f;
+            H[5]=0x9b05688c;
+            H[6]=0x1f83d9ab;
+            H[7]=0x5be0cd19;
         }
-        int file_run(std::string filepath){//该函数实现求文件的哈希值，需要输入文件地址
-            try {
-		process_file(filepath, H, W, K);
-		return 0;
-            }
-            catch (const std::exception& e) {
-                std::cerr << "错误：" << e.what() << std::endl;
-		return 1;
-            }
+        void restore()override{
+            H[0]=0x6a09e667;
+            H[1]=0xbb67ae85;
+            H[2]=0x3c6ef372;
+            H[3]=0xa54ff53a;
+            H[4]=0x510e527f;
+            H[5]=0x9b05688c;
+            H[6]=0x1f83d9ab;
+            H[7]=0x5be0cd19;
+            k = 0;
         }
-        void print_hash() {//输出哈希值
-            std::cout << "SHA-256: ";
-            for (int i = 0; i < 8; i++) {
-                std::cout << std::hex << std::setw(8) << std::setfill('0') << H[i];
-            }
-            std::cout << std::endl;
-        }
+
 };
 const uint32_t SHA_256::K[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -245,31 +247,188 @@ const uint32_t SHA_256::K[64] = {
     0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 };
+class SM3:public Hash_run{
+    private:
+        uint32_t Old_H[8]={
+            0x7380166f,
+            0x4914b2b9,
+            0x172442d7,
+            0xda8a0600,
+            0xa96f30bc,
+            0x163138aa,
+            0xe38dee4d,
+            0xb0fb0e4e
+        };
+        void name(){
+            std::cout<<"SM3:";
+        }
+        inline uint32_t rotl(uint32_t x, int n) {      //该函数实现左循环移位，下列函数为了实现SM3算法中的各种位运算而定义的辅助函数
+            return (x << n) | (x >> (32 - n));
+        }
+        void bytes_to_words_32(const uint8_t block[64], uint32_t words[16]) {//该函数实现端序转换的同时将输入的512比特分为16个块
+            for (int i = 0; i < 16; i++) {
+                words[i] = ((uint32_t)block[i * 4] << 24) |
+                    ((uint32_t)block[i * 4 + 1] << 16) |
+                    ((uint32_t)block[i * 4 + 2] << 8) |
+                    ((uint32_t)block[i * 4 + 3]);
+            }
+        }
+        uint32_t P_0(uint32_t x){
+            return x^rotl(x,9)^rotl(x,17);
+        }
+        uint32_t P_1(uint32_t x){
+            return x^rotl(x,15)^rotl(x,23);
+        }
+        void expand_W(uint32_t W[]){
+            for(int i=16;i<68;++i)
+            {
+                W[i]=P_1(W[i-16]^W[i-9]^rotl(W[i-3],15))^rotl(W[i-13],7)^W[i-6];
+            }
+        }
+        void expand_W_prime(uint32_t W_prime[],uint32_t W[]){
+            for(int i=0;i<64;++i)
+            {
+                W_prime[i]=W[i]^W[i+4];
+            }
+        }
+        uint32_t FF_i(int i,uint32_t x,uint32_t y,uint32_t z){
+            //if(i<=15)     编译器觉得可能存在一种情况，由于输入了奇怪的值，导致没有进入任何一条分支。可以在最底下添加不会被执行的return 0作为保底，也可以改用if-else，也可以选择三元运算符。
+            //    return x^y^z;
+            //if(i>15)
+            //    return (x&y)^(x&z)^(y&z);
+            return (i <= 15) ? (x ^ y ^ z) : ((x & y) ^ (x & z) ^ (y & z));
+        }
+        uint32_t GG_i(int i,uint32_t x,uint32_t y,uint32_t z){
+            //if(i<=15)
+            //    return x^y^z;
+            //if(i>15)
+            //    return (x&y)^(~x&z);
+            return (i <= 15) ? (x ^ y ^ z) : ((x & y) ^ (~x & z));
+        }
+        void compress(uint32_t H[],uint32_t Old_H[],uint32_t W[],uint32_t W_prime[]){
+            for(int j=0;j<8;++j)
+            {
+                Old_H[j]=H[j];
+            }
+            for(int i=0;i<64;++i)
+            {
+                uint32_t T_val = (i < 16) ? 0x79CC4519 : 0x7A879D8A;
+                uint32_t SS1=rotl((rotl(Old_H[0],12)+Old_H[4]+rotl(T_val,i)),7);
+                uint32_t SS2=SS1^rotl(Old_H[0],12);
+                uint32_t TT1=(FF_i(i,Old_H[0],Old_H[1],Old_H[2])+Old_H[3]+SS2+W_prime[i]);
+                uint32_t TT2=(GG_i(i,Old_H[4],Old_H[5],Old_H[6])+Old_H[7]+SS1+W[i]);
+                Old_H[3]=Old_H[2];
+                Old_H[2]=rotl(Old_H[1],9);
+                Old_H[1]=Old_H[0];
+                Old_H[0]=TT1;
+                Old_H[7]=Old_H[6];
+                Old_H[6]=rotl(Old_H[5],19);
+                Old_H[5]=Old_H[4];
+                Old_H[4]=P_0(TT2);
+            }
+        }
+        void the_end(uint32_t H[],uint32_t Old_H[]){
+            for(int i=0;i<8;++i)
+            {
+                H[i]=Old_H[i]^H[i];
+            }
+        }
+        void process_block(const uint8_t block[64]) override{
+            uint32_t W[68];
+            uint32_t W_prime[64];
+            bytes_to_words_32(block, W);
+            expand_W(W);
+            expand_W_prime(W_prime,W);
+            compress(H, Old_H, W, W_prime);
+            the_end(H, Old_H);
+        }
+    public:
+        SM3(){
+            H[0]=0x7380166f;
+            H[1]=0x4914b2b9;
+            H[2]=0x172442d7;
+            H[3]=0xda8a0600;
+            H[4]=0xa96f30bc;
+            H[5]=0x163138aa;
+            H[6]=0xe38dee4d;
+            H[7]=0xb0fb0e4e;
+        }
+        void restore()override{
+            H[0]=0x7380166f;
+            H[1]=0x4914b2b9;
+            H[2]=0x172442d7;
+            H[3]=0xda8a0600;
+            H[4]=0xa96f30bc;
+            H[5]=0x163138aa;
+            H[6]=0xe38dee4d;
+            H[7]=0xb0fb0e4e;
+            k = 0;
+        }
+};
 int main() {
     int result=0;
     int n = 0;
-    std::cout << "输入1进行文件哈希计算，输入0进行字符串哈希计算：" << std::endl << "如果要计算文件哈希值则输入文件地址，如果要计算字符串哈希值则直接输入字符串" << std::endl << "请输入：";
-    std::cin >> n;
-    std::cin.ignore(); // 忽略换行符    
-    std::string input;
-    std::string filepath;
-    SHA_256 sha256;
-    if (n == 1)
-    {
-        std::cout << "请输入文件路径: ";
-        std::getline(std::cin, filepath);
-        result=sha256.file_run(filepath);
+    int j = 0;
+    int k = 0;
+    while(1){
+        std::cout<<"输入1退出程序,输入0继续"<<std::endl;
+        std::cin>>j;
+        if(j)
+            break;
+        std::cout<<"输入1选择SHA-256算法，输入0选择SM3算法："<<std::endl;
+        std::cin>>k;
+        if(k==1){
+            std::cout << "输入1进行文件哈希计算，输入0进行字符串哈希计算：" << std::endl << "如果要计算文件哈希值则输入文件地址，如果要计算字符串哈希值则直接输入字符串" << std::endl << "请输入：";
+            std::cin >> n;
+            std::cin.ignore(); // 忽略换行符    
+            std::string input;
+            std::string filepath;
+            SHA_256 sha256;
+            if (n == 1)
+            {
+                std::cout << "请输入文件路径: ";
+                std::getline(std::cin, filepath);
+                result=sha256.file_run(filepath);
+            }
+            else if (n == 0) {
+                std::cout << "请输入字符串: ";
+                std::getline(std::cin, input);
+                sha256.str_run(input);
+            }
+            else {
+                std::cout << "输入错误，请重新运行程序！" << std::endl;
+            }
+            if(result!=0)
+                return result;
+            sha256.print_hash();
+            sha256.restore();
+        }
+        if(k==0){
+            std::cout << "输入1进行文件哈希计算，输入0进行字符串哈希计算：" << std::endl << "如果要计算文件哈希值则输入文件地址，如果要计算字符串哈希值则直接输入字符串" << std::endl << "请输入：";
+            std::cin >> n;
+            std::cin.ignore(); // 忽略换行符    
+            std::string input;
+            std::string filepath;
+            SM3 sm3;
+            if (n == 1)
+            {
+                std::cout << "请输入文件路径: ";
+                std::getline(std::cin, filepath);
+                result=sm3.file_run(filepath);
+            }
+            else if (n == 0) {
+                std::cout << "请输入字符串: ";
+                std::getline(std::cin, input);
+                sm3.str_run(input);
+            }
+            else {
+                std::cout << "输入错误，请重新运行程序！" << std::endl;
+            }
+            if(result!=0)
+                return result;
+            sm3.print_hash();
+            sm3.restore();
+        }
     }
-    else if (n == 0) {
-        std::cout << "请输入字符串: ";
-        std::getline(std::cin, input);
-        sha256.str_run(input);
-    }
-    else {
-        std::cout << "输入错误，请重新运行程序！" << std::endl;
-    }
-    if(result!=0)
-        return result;
-    sha256.print_hash();
     return 0;
 }
