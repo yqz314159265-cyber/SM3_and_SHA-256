@@ -210,6 +210,16 @@ const uint32_t SHA_256::K[64] = {
 };
 class SM3:public Hash_run{
     private:
+        uint32_t Old_H[8]={
+            0x7380166f,
+            0x4914b2b9,
+            0x172442d7,
+            0xda8a0600,
+            0xa96f30bc,
+            0x163138aa,
+            0xe38dee4d,
+            0xb0fb0e4e
+        };
         inline uint32_t rotl(uint32_t x, int n) {      //该函数实现左循环移位，下列函数为了实现SM3算法中的各种位运算而定义的辅助函数
             return (x << n) | (x >> (32 - n));
         }
@@ -240,33 +250,45 @@ class SM3:public Hash_run{
             }
         }
         uint32_t FF_i(int i,uint32_t x,uint32_t y,uint32_t z){
-            if(i<=15)
-                return x^y^z;
-            if(i>15)
-                return (x&y)^(x&z)^(y&z);
+            //if(i<=15)     编译器觉得可能存在一种情况，由于输入了奇怪的值，导致没有进入任何一条分支。可以在最底下添加不会被执行的return 0作为保底，也可以改用if-else，也可以选择三元运算符。
+            //    return x^y^z;
+            //if(i>15)
+            //    return (x&y)^(x&z)^(y&z);
+            return (i <= 15) ? (x ^ y ^ z) : ((x & y) ^ (x & z) ^ (y & z));
         }
         uint32_t GG_i(int i,uint32_t x,uint32_t y,uint32_t z){
-            if(i<=15)
-                return x^y^z;
-            if(i>15)
-                return (x&y)^(~x&z);
+            //if(i<=15)
+            //    return x^y^z;
+            //if(i>15)
+            //    return (x&y)^(~x&z);
+            return (i <= 15) ? (x ^ y ^ z) : ((x & y) ^ (~x & z));
         }
-        void compress(uint32_t H[],uint32_t W[],uint32_t W_prime[]){
+        void compress(uint32_t H[],uint32_t Old_H[],uint32_t W[],uint32_t W_prime[]){
+            for(int j=0;j<8;++j)
+            {
+                Old_H[j]=H[j];
+            }
             for(int i=0;i<64;++i)
             {
                 uint32_t T_val = (i < 16) ? 0x79CC4519 : 0x7A879D8A;
-                uint32_t SS1=rotl((rotl(H[0],12)+H[4]+rotl(T_val,i)),7);
-                uint32_t SS2=SS1^rotl(H[0],12);
-                uint32_t TT1=(FF_i(i,H[0],H[1],H[2])+H[3]+SS2+W_prime[i])%0x100000000;
-                uint32_t TT2=(GG_i(i,H[4],H[5],H[6])+H[7]+SS1+W[i])%0x100000000;
-                H[3]=H[2];
-                H[2]=rotl(H[1],9);
-                H[1]=H[0];
-                H[0]=TT1;
-                H[7]=H[6];
-                H[6]=rotl(H[5],19);
-                H[5]=H[4];
-                H[4]=P_0(TT2);
+                uint32_t SS1=rotl((rotl(Old_H[0],12)+Old_H[4]+rotl(T_val,i)),7);
+                uint32_t SS2=SS1^rotl(Old_H[0],12);
+                uint32_t TT1=(FF_i(i,Old_H[0],Old_H[1],Old_H[2])+Old_H[3]+SS2+W_prime[i]);
+                uint32_t TT2=(GG_i(i,Old_H[4],Old_H[5],Old_H[6])+Old_H[7]+SS1+W[i]);
+                Old_H[3]=Old_H[2];
+                Old_H[2]=rotl(Old_H[1],9);
+                Old_H[1]=Old_H[0];
+                Old_H[0]=TT1;
+                Old_H[7]=Old_H[6];
+                Old_H[6]=rotl(Old_H[5],19);
+                Old_H[5]=Old_H[4];
+                Old_H[4]=P_0(TT2);
+            }
+        }
+        void the_end(uint32_t H[],uint32_t Old_H[]){
+            for(int i=0;i<8;++i)
+            {
+                H[i]=Old_H[i]^H[i];
             }
         }
         void process_block(const uint8_t block[64]) override{
@@ -275,7 +297,8 @@ class SM3:public Hash_run{
             bytes_to_words_32(block, W);
             expand_W(W);
             expand_W_prime(W_prime,W);
-            compress(H,W,W_prime);
+            compress(H, Old_H, W, W_prime);
+            the_end(H, Old_H);
         }
     public:
         SM3(){
