@@ -5,15 +5,30 @@
 #include <cstdint>      
 #include <iomanip>      
 #include <cstring>
+void secure_zero(void* ptr, size_t len) {//内存擦除函数，防止内存攻击
+    volatile char* p = static_cast<volatile char*>(ptr);
+    while (len--) {
+        *p++ = 0;
+    }
+}
 class Hash_run{
     protected:
         uint32_t H[8];
         int k=0;
+        //该函数实现转换端序的作用，已经快被ai气死了。没有将小端序转化为大端序的时候，我发现相同的输入会有不同的输出，十分地奇怪，也琢磨不明白。
+        void bytes_to_words_32(uint8_t block[64], uint32_t words[16]) {
+            for (int i = 0; i < 16; i++) {
+                words[i] = ((uint32_t)block[i * 4] << 24) |
+                    ((uint32_t)block[i * 4 + 1] << 16) |
+                    ((uint32_t)block[i * 4 + 2] << 8) |
+                    ((uint32_t)block[i * 4 + 3]);
+            }
+            secure_zero(block, 64);//转换完之后将block清零，防止内存攻击.同时修改了代码对应的地方，去除了const。
+        }
     private:
-        uint32_t W[64];
         //virtual const uint32_t* get_K() const = 0;//因为K是static数组，所以使用虚函数返回它的地址
         //const uint32_t* K = get_K();这个不可以在构造函数或者初始化使用，只能在普通函数里面调用，否则会出现严重错误。
-        virtual void process_block(const uint8_t block[64])=0;//为了使用虚函数，但是sha256和sm3的许多代码，函数不同，所以设置一个这样的虚函数将整个计算过程封起来，这样就可以复用文件读取，输出等代码了
+        virtual void process_block(uint8_t block[64])=0;//为了使用虚函数，但是sha256和sm3的许多代码，函数不同，所以设置一个这样的虚函数将整个计算过程封起来，这样就可以复用文件读取，输出等代码了
         virtual void name()=0;
         void the_last(uint64_t total_bits) {//该函数实现当文件刚好为512比特的整数倍时，手动创建最后一个数据块参与哈希值运算
             uint8_t J[64] = { 0x80 };
@@ -157,7 +172,7 @@ class SHA_256:public Hash_run{
         inline uint32_t sigma1(uint32_t x) {
             return rotr(x, 17) ^ rotr(x, 19) ^ (x >> 10);
         } 
-        void expand_words (const uint32_t words[16], uint32_t W[64]) {
+        void expand_words (uint32_t words[16], uint32_t W[64]) {
             for (int i = 0; i < 16; ++i)
             {
                 W[i] = words[i];
@@ -166,6 +181,7 @@ class SHA_256:public Hash_run{
             {
                 W[i] = sigma1(W[i - 2]) + W[i - 7] + sigma0(W[i - 15]) + W[i - 16];
             }
+            secure_zero(words, 64);//扩展完之后将words清零，防止内存攻击
         }
         void compress(uint32_t H[8], uint32_t W[64], const uint32_t K[64]) {//压缩函数
             uint32_t a = H[0];
@@ -198,17 +214,10 @@ class SHA_256:public Hash_run{
             H[5] += f;
             H[6] += g;
             H[7] += h;
+            a = b = c = d = e = f = g = h = 0;//压缩函数结束后将a,b,c,d,e,f,g,h清零，防止内存攻击
+            secure_zero(W, 256);//擦除数据，防止内存攻击
         }
-        //该函数实现转换端序的作用，已经快被ai气死了。没有将小端序转化为大端序的时候，我发现相同的输入会有不同的输出，十分地奇怪，也琢磨不明白。
-        void bytes_to_words_32(const uint8_t block[64], uint32_t words[16]) {
-            for (int i = 0; i < 16; i++) {
-                words[i] = ((uint32_t)block[i * 4] << 24) |
-                    ((uint32_t)block[i * 4 + 1] << 16) |
-                    ((uint32_t)block[i * 4 + 2] << 8) |
-                    ((uint32_t)block[i * 4 + 3]);
-            }
-        }
-        void process_block(const uint8_t block[64]) override{
+        void process_block(uint8_t block[64]) override{
             bytes_to_words_32(block, words);
             expand_words(words, W);
             compress(H, W, K);
@@ -265,14 +274,6 @@ class SM3:public Hash_run{
         inline uint32_t rotl(uint32_t x, int n) {      //该函数实现左循环移位，下列函数为了实现SM3算法中的各种位运算而定义的辅助函数
             return (x << n) | (x >> (32 - n));
         }
-        void bytes_to_words_32(const uint8_t block[64], uint32_t words[16]) {//该函数实现端序转换的同时将输入的512比特分为16个块
-            for (int i = 0; i < 16; i++) {
-                words[i] = ((uint32_t)block[i * 4] << 24) |
-                    ((uint32_t)block[i * 4 + 1] << 16) |
-                    ((uint32_t)block[i * 4 + 2] << 8) |
-                    ((uint32_t)block[i * 4 + 3]);
-            }
-        }
         uint32_t P_0(uint32_t x){
             return x^rotl(x,9)^rotl(x,17);
         }
@@ -326,14 +327,17 @@ class SM3:public Hash_run{
                 Old_H[5]=Old_H[4];
                 Old_H[4]=P_0(TT2);
             }
+            secure_zero(W, 272);
+            secure_zero(W_prime, 256);//压缩函数结束后将W和W_prime清零，防止内存攻击
         }
         void the_end(uint32_t H[],uint32_t Old_H[]){
             for(int i=0;i<8;++i)
             {
                 H[i]=Old_H[i]^H[i];
             }
+            secure_zero(Old_H, 32);//压缩函数结束后将Old_H清零，防止内存攻击
         }
-        void process_block(const uint8_t block[64]) override{
+        void process_block(uint8_t block[64]) override{
             uint32_t W[68];
             uint32_t W_prime[64];
             bytes_to_words_32(block, W);
