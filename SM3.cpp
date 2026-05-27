@@ -10,7 +10,7 @@ class Hash_run{
         uint32_t H[8];
     private:
         uint32_t W[64];
-        virtual const uint32_t* get_K() const = 0;//因为K是static数组，所以使用虚函数返回它的地址
+        //virtual const uint32_t* get_K() const = 0;//因为K是static数组，所以使用虚函数返回它的地址
         //const uint32_t* K = get_K();这个不可以在构造函数或者初始化使用，只能在普通函数里面调用，否则会出现严重错误。
         virtual void process_block(const uint8_t block[64])=0;//为了使用虚函数，但是sha256和sm3的许多代码，函数不同，所以设置一个这样的虚函数将整个计算过程封起来，这样就可以复用文件读取，输出等代码了
         void the_last(uint64_t total_bits) {//该函数实现当文件刚好为512比特的整数倍时，手动创建最后一个数据块参与哈希值运算
@@ -21,7 +21,7 @@ class Hash_run{
             process_block(J);
         }
         void process_file(const std::string& filepath) {//该函数实现对文件计算哈希值，同时通过流式读取降低内存占用
-            const uint32_t* K = get_K();
+            //const uint32_t* K = get_K();
             std::ifstream file(filepath, std::ios::binary);
             if (!file) {
                 throw std::runtime_error("无法打开文件: " + filepath);
@@ -106,9 +106,9 @@ class SHA_256:public Hash_run{
         uint32_t W[64];
         uint32_t words[16];
         static const uint32_t K[64];
-        const uint32_t* get_K() const override {
-            return K;  // 返回自己的 static const 数组
-        }
+        //const uint32_t* get_K()  {//const override
+        //    return K;  // 返回自己的 static const 数组
+        //}
         inline uint32_t rotr(uint32_t x, int n) {      //该函数实现右循环移位，下列函数为了实现SHA-256算法中的各种位运算而定义的辅助函数
             return (x >> n) | (x << (32 - n));
         }
@@ -251,8 +251,42 @@ class SM3:public Hash_run{
             if(i>15)
                 return (x&y)^(~x&z);
         }
-        uint32_t compress(uint32_t H[],uint32_t W[],uint32_t W_prime[]){
-            
+        void compress(uint32_t H[],uint32_t W[],uint32_t W_prime[]){
+            for(int i=0;i<64;++i)
+            {
+                uint32_t T_val = (i < 16) ? 0x79CC4519 : 0x7A879D8A;
+                uint32_t SS1=rotl((rotl(H[0],12)+H[4]+rotl(T_val,i)),7);
+                uint32_t SS2=SS1^rotl(H[0],12);
+                uint32_t TT1=(FF_i(i,H[0],H[1],H[2])+H[3]+SS2+W_prime[i])%0x100000000;
+                uint32_t TT2=(GG_i(i,H[4],H[5],H[6])+H[7]+SS1+W[i])%0x100000000;
+                H[3]=H[2];
+                H[2]=rotl(H[1],9);
+                H[1]=H[0];
+                H[0]=TT1;
+                H[7]=H[6];
+                H[6]=rotl(H[5],19);
+                H[5]=H[4];
+                H[4]=P_0(TT2);
+            }
+        }
+        void process_block(const uint8_t block[64]) override{
+            uint32_t W[68];
+            uint32_t W_prime[64];
+            bytes_to_words_32(block, W);
+            expand_W(W);
+            expand_W_prime(W_prime,W);
+            compress(H,W,W_prime);
+        }
+    public:
+        SM3(){
+            H[0]=0x7380166f;
+            H[1]=0x4914b2b9;
+            H[2]=0x172442d7;
+            H[3]=0xda8a0600;
+            H[4]=0xa96f30bc;
+            H[5]=0x163138aa;
+            H[6]=0xe38dee4d;
+            H[7]=0xb0fb0e4e;
         }
 };
 int main() {
@@ -263,7 +297,7 @@ int main() {
     std::cin.ignore(); // 忽略换行符    
     std::string input;
     std::string filepath;
-    SHA_256 sha256;
+    SM3 sha256;
     if (n == 1)
     {
         std::cout << "请输入文件路径: ";
