@@ -1,7 +1,7 @@
-﻿#include <iostream>     //   更新计划： 目前想着使用类继承重构代码，但是目前发现原来的类封装时将读取文件，端序转换和进行哈希值计算合到一个函数里面，目前打算是将读取文件，端序转换函数里面有关SHA-256的语句删除，同时在sha256和sm3上重新写两个一样的函数，调用父类的同一个函数。或者说有什么别的更好的方法。然后搞完了这些，还要接着写关于安全方面的代码，避免时序攻击和内存攻击
-#include <fstream>      //我发现虚函数是个好东西
-#include <string>      //测试了几个测试向量，结果是正确的。下一步打算重写main函数，改成循环形式，并且可以选择算法。同时加入重置函数，重置哈希值，或者是计算完之后将代码锁定，再次计算哈希值会报错，但是可以输出多次哈希值。或者两者都要。还有就是print_hash函数也打算重写一下，因为可能需要输出对应的算法名。目前想法是这个输出函数依旧放在父类，但是每个子类对象可以定义一个字符串变量，内容是算法名，最后直接输出。上面这些是下一步的更新计划。做完上面的之后打算进一步修改代码，防御时序攻击，内存攻击等
-#include <vector>       //现在的更新计划应该是增加安全性，防御时序攻击和内存攻击了
+﻿#include <iostream>     
+#include <fstream>      
+#include <string>      
+#include <vector>       
 #include <cstdint>      
 #include <iomanip>      
 #include <cstring>
@@ -15,7 +15,6 @@ class Hash_run{
     protected:
         uint32_t H[8];
         int k=0;
-        //该函数实现转换端序的作用，已经快被ai气死了。没有将小端序转化为大端序的时候，我发现相同的输入会有不同的输出，十分地奇怪，也琢磨不明白。
         void bytes_to_words_32(uint8_t block[64], uint32_t words[16]) {
             for (int i = 0; i < 16; i++) {
                 words[i] = ((uint32_t)block[i * 4] << 24) |
@@ -26,9 +25,7 @@ class Hash_run{
             secure_zero(block, 64);//转换完之后将block清零，防止内存攻击.同时修改了代码对应的地方，去除了const。
         }
     private:
-        //virtual const uint32_t* get_K() const = 0;//因为K是static数组，所以使用虚函数返回它的地址
-        //const uint32_t* K = get_K();这个不可以在构造函数或者初始化使用，只能在普通函数里面调用，否则会出现严重错误。
-        virtual void process_block(uint8_t block[64])=0;//为了使用虚函数，但是sha256和sm3的许多代码，函数不同，所以设置一个这样的虚函数将整个计算过程封起来，这样就可以复用文件读取，输出等代码了
+        virtual void process_block(uint8_t block[64])=0;
         virtual void name()=0;
         void the_last(uint64_t total_bits) {//该函数实现当文件刚好为512比特的整数倍时，手动创建最后一个数据块参与哈希值运算
             uint8_t J[64] = { 0x80 };
@@ -56,9 +53,9 @@ class Hash_run{
                     for (int k = 0; k < 4096; k += 64) {
                         process_block(reinterpret_cast<uint8_t*>(buffer+k));
                     }
-                }//只有这里往上的代码，才会一直参与while循环，当不满足bytes_read==4096时，将会执行下面代码，执行完之后会跳出循环
+                }
                 else if (bytes_read % 64 == 0 && bytes_read != 4096) {
-                    for (int k = 0; k < bytes_read; k += 64) {
+                    for (size_t k = 0; k < bytes_read; k += 64) {
                         process_block(reinterpret_cast<uint8_t*>(buffer+k));
                     }
                     the_last(total_bits);
@@ -93,9 +90,9 @@ class Hash_run{
                 input += static_cast<char>(0x00);
             }
             for (int i = 7; i >= 0; --i) {
-                input += static_cast<char>((total_bits >> (i * 8)) & 0xFF);//实现长度的端序转换，再接到后面
+                input += static_cast<char>((total_bits >> (i * 8)) & 0xFF);
             }
-            if (input.size() * 8 > 512) {     //如果经过处理之后的数据大于512比特，那么需要进行分块
+            if (input.size() * 8 > 512) {     
                 for (size_t i = 0; i < input.size(); i += 64) {
                     process_block(reinterpret_cast<uint8_t*>(input.data()+i));
                 }
@@ -137,6 +134,13 @@ class Hash_run{
         }
         std::cout << std::endl;
     }
+    bool const_compare_Hash(uint32_t H[],uint32_t Old_H[]){
+        uint32_t diff = 0;
+        for (size_t i = 0; i < 8; ++i) {
+            diff |= H[i] ^ Old_H[i];  
+        }
+        return diff == 0;
+    }
     virtual void restore()=0;
     virtual ~Hash_run() = default;
 };  
@@ -145,13 +149,10 @@ class SHA_256:public Hash_run{
         uint32_t W[64];
         uint32_t words[16];
         static const uint32_t K[64];
-        //const uint32_t* get_K()  {//const override
-        //    return K;  // 返回自己的 static const 数组
-        //}
         void name(){
             std::cout<<"SHA-256:";
         }
-        inline uint32_t rotr(uint32_t x, int n) {      //该函数实现右循环移位，下列函数为了实现SHA-256算法中的各种位运算而定义的辅助函数
+        inline uint32_t rotr(uint32_t x, int n) {      
             return (x >> n) | (x << (32 - n));
         }
         inline uint32_t Ch(uint32_t x, uint32_t y, uint32_t z) {
@@ -181,7 +182,7 @@ class SHA_256:public Hash_run{
             {
                 W[i] = sigma1(W[i - 2]) + W[i - 7] + sigma0(W[i - 15]) + W[i - 16];
             }
-            secure_zero(words, 64);//扩展完之后将words清零，防止内存攻击
+            secure_zero(words, 64);
         }
         void compress(uint32_t H[8], uint32_t W[64], const uint32_t K[64]) {//压缩函数
             uint32_t a = H[0];
@@ -193,9 +194,7 @@ class SHA_256:public Hash_run{
             uint32_t g = H[6];
             uint32_t h = H[7];
             for (int t = 0; t < 64; t++) {
-                // T1 = h + Σ1(e) + Ch(e,f,g) + K[t] + W[t]
                 uint32_t T1 = h + Sigma1(e) + Ch(e, f, g) + K[t] + W[t];
-                // T2 = Σ0(a) + Maj(a,b,c)
                 uint32_t T2 = Sigma0(a) + Maj(a, b, c);
                 h = g;
                 g = f;
@@ -214,8 +213,8 @@ class SHA_256:public Hash_run{
             H[5] += f;
             H[6] += g;
             H[7] += h;
-            a = b = c = d = e = f = g = h = 0;//压缩函数结束后将a,b,c,d,e,f,g,h清零，防止内存攻击
-            secure_zero(W, 256);//擦除数据，防止内存攻击
+            a = b = c = d = e = f = g = h = 0;
+            secure_zero(W, 256);
         }
         void process_block(uint8_t block[64]) override{
             bytes_to_words_32(block, words);
@@ -271,7 +270,7 @@ class SM3:public Hash_run{
         void name(){
             std::cout<<"SM3:";
         }
-        inline uint32_t rotl(uint32_t x, int n) {      //该函数实现左循环移位，下列函数为了实现SM3算法中的各种位运算而定义的辅助函数
+        inline uint32_t rotl(uint32_t x, int n) {      
             return (x << n) | (x >> (32 - n));
         }
         uint32_t P_0(uint32_t x){
@@ -293,17 +292,9 @@ class SM3:public Hash_run{
             }
         }
         uint32_t FF_i(int i,uint32_t x,uint32_t y,uint32_t z){
-            //if(i<=15)     编译器觉得可能存在一种情况，由于输入了奇怪的值，导致没有进入任何一条分支。可以在最底下添加不会被执行的return 0作为保底，也可以改用if-else，也可以选择三元运算符。
-            //    return x^y^z;
-            //if(i>15)
-            //    return (x&y)^(x&z)^(y&z);
             return (i <= 15) ? (x ^ y ^ z) : ((x & y) ^ (x & z) ^ (y & z));
         }
         uint32_t GG_i(int i,uint32_t x,uint32_t y,uint32_t z){
-            //if(i<=15)
-            //    return x^y^z;
-            //if(i>15)
-            //    return (x&y)^(~x&z);
             return (i <= 15) ? (x ^ y ^ z) : ((x & y) ^ (~x & z));
         }
         void compress(uint32_t H[],uint32_t Old_H[],uint32_t W[],uint32_t W_prime[]){
@@ -328,14 +319,14 @@ class SM3:public Hash_run{
                 Old_H[4]=P_0(TT2);
             }
             secure_zero(W, 272);
-            secure_zero(W_prime, 256);//压缩函数结束后将W和W_prime清零，防止内存攻击
+            secure_zero(W_prime, 256);
         }
         void the_end(uint32_t H[],uint32_t Old_H[]){
             for(int i=0;i<8;++i)
             {
                 H[i]=Old_H[i]^H[i];
             }
-            secure_zero(Old_H, 32);//压缩函数结束后将Old_H清零，防止内存攻击
+            secure_zero(Old_H, 32);
         }
         void process_block(uint8_t block[64]) override{
             uint32_t W[68];
