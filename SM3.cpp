@@ -1,4 +1,21 @@
-﻿#include <iostream>     
+﻿/*该函数实现了计算SM3和SHA-256哈希值的功能。输入可以是字符串或者文件。程序通过一个基类Hash_run来实现对字符串和文件的读取输出以及边界情况的处理。
+*并且通过派生类SHA_256和SM3来实现具体的哈希算法。程序还实现了内存擦除函数secure_zero来防止内存攻击。也搭载了防止时序攻击的const_compare_Hash函数
+*str_run和file_run函数实现了对字符串和文件的哈希值计算，并且通过异常处理来捕获错误情况。
+*str_run的输入应该是字符串或者字符串变量，file_run的输入应该是文件地址。
+*在父类Hsah_run中，通过设计一个布尔变量K来防止重复迭代计算哈希值的情况发生，如果K为true则说明已经进行过一次哈希值计算了，此时再次调用str_run或者file_run函数就会抛出一个逻辑错误异常，提示用户不可以重复迭代计算。
+*同时提供了restore函数来重置哈希值和K变量，以便进行新的哈希值计算。用户可以在restore一个变量之后重新输入新的内容计算哈希值。
+*下面是各函数的使用解释
+*SHA-256 sha256 SM3 sm3; //创建对象
+*sha256.str_run("hello world"); //计算字符串"hello world"的SHA-256哈希值
+*sha256.file_run("path/to/file.txt"); //计算文件"path/to/file.txt"的SHA-256哈希值
+*sha256.print_hash(); //输出SHA-256哈希值
+*sha256.restore(); //重置哈希值，以便进行新的哈希值计算，可以输入计算新的内容
+*sm3.str_run("hello world"); //计算字符串"hello world"的SM3哈希值
+*sm3.file_run("path/to/file.txt"); //计算文件"path/to/file.txt"的SM3哈希值
+*sm3.print_hash(); //输出SM3哈希值
+*sm3.restore(); //重置哈希值，以便进行新的哈希值计算，可以输入计算新的内容
+*/
+#include <iostream>     
 #include <fstream>      
 #include <string>      
 #include <vector>       
@@ -14,7 +31,7 @@ void secure_zero(void* ptr, size_t len) {//内存擦除函数，防止内存攻�
 class Hash_run{
     protected:
         uint32_t H[8];
-        int k=0;
+        bool k=0;
         void bytes_to_words_32(uint8_t block[64], uint32_t words[16]) {
             for (int i = 0; i < 16; i++) {
                 words[i] = ((uint32_t)block[i * 4] << 24) |
@@ -78,7 +95,7 @@ class Hash_run{
             if (total_bits % 4096 == 0) {//文件恰好为4kb的整数倍的情况时，进行的选择
                 the_last(total_bits);
             }
-            ++k;
+            k = true;
         }
         void str(std::string input){//该函数实现求字符串的哈希值
             uint64_t total_bits = input.size() * 8;
@@ -100,7 +117,7 @@ class Hash_run{
             else {
                 process_block(reinterpret_cast<uint8_t*>(input.data()));
             }
-            ++k;
+            k = true;
         }
     public:
     int str_run(std::string input){
